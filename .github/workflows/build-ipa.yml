@@ -13,39 +13,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract project (with diagnostics)
+      - name: Extract project (tries every zip)
         run: |
           echo ">> Repo contents:"
           ls -la
-          echo ">> Looking for zip files:"
-          find . -name "*.zip" -not -path "./.git/*"
-          ZIPFILE=$(find . -maxdepth 1 -name "*.zip" | head -1)
-          if [ -n "$ZIPFILE" ]; then
-            echo ">> Unzipping $ZIPFILE ..."
-            unzip -oq "$ZIPFILE" || echo ">> WARNING: unzip reported a problem with $ZIPFILE"
-          else
-            echo ">> No zip file found at repo root!"
-          fi
-          if [ -d johalplay ]; then
-            shopt -s dotglob
-            for f in johalplay/*; do
-              base=$(basename "$f")
-              if [ ! -e "$base" ]; then mv "$f" .; fi
-            done
-            rmdir johalplay 2>/dev/null || true
-          fi
+          echo ">> Zip files found:"
+          find . -maxdepth 1 -name "*.zip"
+          while IFS= read -r ZIPFILE; do
+            [ -n "$ZIPFILE" ] || continue
+            rm -rf _stage
+            mkdir -p _stage
+            ( cd _stage && unzip -oq "../$ZIPFILE" ) && echo ">> $ZIPFILE: unzip OK" || echo ">> $ZIPFILE: unzip reported problems"
+            SRC=""
+            if [ -f _stage/JohalPlay.xcodeproj/project.pbxproj ]; then SRC="_stage"; fi
+            if [ -z "$SRC" ] && [ -d _stage/johalplay ] && [ -f _stage/johalplay/JohalPlay.xcodeproj/project.pbxproj ]; then SRC="_stage/johalplay"; fi
+            if [ -n "$SRC" ]; then
+              shopt -s dotglob
+              for f in "$SRC"/*; do
+                base=$(basename "$f")
+                if [ ! -e "$base" ]; then mv "$f" .; fi
+              done
+              [ "$SRC" = "_stage" ] || rmdir "$SRC" 2>/dev/null || true
+              echo ">> Using project from $ZIPFILE"
+              break
+            fi
+          done < <(find . -maxdepth 1 -name "*.zip")
+          rm -rf _stage
           echo ">> Repo contents after extraction:"
           ls -la
           echo ">> JohalPlay source folder:"
           ls -la JohalPlay 2>/dev/null || echo ">> (no JohalPlay folder!)"
           if [ ! -f JohalPlay.xcodeproj/project.pbxproj ]; then
-            echo "ERROR: JohalPlay.xcodeproj not found. Searching..."
+            echo "ERROR: JohalPlay.xcodeproj not found in any zip. Searching the repo..."
             find . -name "project.pbxproj" -not -path "./.git/*" | head -5
             exit 1
           fi
           echo ">> Project files ready"
 
-      - name: Ensure app icon exists (safety net)
+      - name: Self-heal missing pieces
         run: |
           ASSETS="JohalPlay/Assets.xcassets"
           if [ ! -d "$ASSETS/AppIcon.appiconset" ]; then
@@ -56,7 +61,111 @@ jobs:
           if [ ! -f "$ASSETS/Contents.json" ]; then
             printf '{\n  "info" : {\n    "author" : "xcode",\n    "version" : 1\n  }\n}\n' > "$ASSETS/Contents.json"
           fi
-          echo ">> Assets OK"
+          if [ ! -f "JohalPlay/Info.plist" ]; then
+            echo ">> Info.plist missing - recreating it"
+            cat > "JohalPlay/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>JohalPlay</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>CPApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>CarPlay Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+				</dict>
+			</array>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>
+PLIST
+          fi
+          echo ">> Self-heal done"
+
+      - name: Pre-flight check
+        run: |
+          MISSING=""
+          for f in \
+            JohalPlay/JohalPlayApp.swift \
+            JohalPlay/StreamModels.swift \
+            JohalPlay/StreamLibrary.swift \
+            JohalPlay/YouTubeBridge.swift \
+            JohalPlay/PlayerManager.swift \
+            JohalPlay/PlayerView.swift \
+            JohalPlay/LibraryView.swift \
+            JohalPlay/MotionMonitor.swift \
+            JohalPlay/CarPlaySceneDelegate.swift \
+            JohalPlay/Info.plist \
+            JohalPlay.xcodeproj/project.pbxproj ; do
+            [ -f "$f" ] || MISSING="$MISSING $f"
+          done
+          if [ -n "$MISSING" ]; then
+            echo "ERROR: These files are still missing:$MISSING"
+            echo "The zip in the repo is incomplete. Re-upload a fresh zip and commit again."
+            exit 1
+          fi
+          echo ">> Pre-flight OK: all 11 required files present"
 
       - name: Show Xcode version
         run: xcodebuild -version
