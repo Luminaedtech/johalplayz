@@ -1,0 +1,74 @@
+name: Build JohalPlay IPA
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    name: Build unsigned IPA (macOS runner)
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract project (with diagnostics)
+        run: |
+          echo ">> Repo contents:"
+          ls -la
+          echo ">> Looking for zip files:"
+          find . -name "*.zip" -not -path "./.git/*"
+          ZIPFILE=$(find . -maxdepth 1 -name "*.zip" | head -1)
+          if [ -n "$ZIPFILE" ]; then
+            echo ">> Unzipping $ZIPFILE ..."
+            unzip -oq "$ZIPFILE" || echo ">> WARNING: unzip reported a problem with $ZIPFILE"
+          else
+            echo ">> No zip file found at repo root!"
+          fi
+          if [ -d johalplay ]; then
+            shopt -s dotglob
+            for f in johalplay/*; do
+              base=$(basename "$f")
+              if [ ! -e "$base" ]; then mv "$f" .; fi
+            done
+            rmdir johalplay 2>/dev/null || true
+          fi
+          echo ">> Repo contents after extraction:"
+          ls -la
+          if [ ! -f JohalPlay.xcodeproj/project.pbxproj ]; then
+            echo "ERROR: JohalPlay.xcodeproj not found. Searching..."
+            find . -name "project.pbxproj" -not -path "./.git/*" | head -5
+            exit 1
+          fi
+          echo ">> Project files ready"
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Archive for iOS device (unsigned)
+        run: |
+          xcodebuild \
+            -project JohalPlay.xcodeproj \
+            -scheme JohalPlay \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/JohalPlay.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            archive
+
+      - name: Package IPA
+        run: |
+          APP_DIR="build/JohalPlay.xcarchive/Products/Applications"
+          mkdir -p build/Payload
+          mv "$APP_DIR/JohalPlay.app" build/Payload/
+          ( cd build && zip -qry JohalPlay.ipa Payload )
+          ls -lh build/JohalPlay.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JohalPlay-unsigned.ipa
+          path: build/JohalPlay.ipa
+          if-no-files-found: error
