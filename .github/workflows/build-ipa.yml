@@ -36,12 +36,27 @@ jobs:
           fi
           echo ">> Repo contents after extraction:"
           ls -la
+          echo ">> JohalPlay source folder:"
+          ls -la JohalPlay 2>/dev/null || echo ">> (no JohalPlay folder!)"
           if [ ! -f JohalPlay.xcodeproj/project.pbxproj ]; then
             echo "ERROR: JohalPlay.xcodeproj not found. Searching..."
             find . -name "project.pbxproj" -not -path "./.git/*" | head -5
             exit 1
           fi
           echo ">> Project files ready"
+
+      - name: Ensure app icon exists (safety net)
+        run: |
+          ASSETS="JohalPlay/Assets.xcassets"
+          if [ ! -d "$ASSETS/AppIcon.appiconset" ]; then
+            echo ">> AppIcon set missing - creating a minimal one so the build can proceed"
+            mkdir -p "$ASSETS/AppIcon.appiconset"
+            printf '{\n  "images" : [\n    {\n      "idiom" : "universal",\n      "platform" : "ios",\n      "size" : "1024x1024"\n    }\n  ],\n  "info" : {\n    "author" : "xcode",\n    "version" : 1\n  }\n}\n' > "$ASSETS/AppIcon.appiconset/Contents.json"
+          fi
+          if [ ! -f "$ASSETS/Contents.json" ]; then
+            printf '{\n  "info" : {\n    "author" : "xcode",\n    "version" : 1\n  }\n}\n' > "$ASSETS/Contents.json"
+          fi
+          echo ">> Assets OK"
 
       - name: Show Xcode version
         run: xcodebuild -version
